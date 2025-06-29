@@ -15,7 +15,7 @@ COLORS = {
 RANDOMIZE_SEED = True
 SEED = 1000
 CELL_SIZE = 50
-WINDOW_SIZE = (800, 800)  # 400x400 - beginner difficulty, 800x800 - standard difficulty, 1500x800 hard difficulty
+WINDOW_SIZE = (1500, 800)  # 400x400 - beginner difficulty, 800x800 - standard difficulty, 1500x800 hard difficulty
 MINES_PERCENT = 20
 DEBUG = False  # enables some tweaks (cheats)
 

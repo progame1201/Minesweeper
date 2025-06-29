@@ -1,3 +1,4 @@
+import sys
 import time
 import numpy
 import pygame
@@ -7,24 +8,38 @@ from objects import *
 
 
 pygame.init()
-x, y = WINDOW_SIZE
-screen = pygame.display.set_mode((x, y + 30), pygame.HWSURFACE | pygame.DOUBLEBUF)
-running = True
-clock = pygame.time.Clock()
-if not RANDOMIZE_SEED:
-    numpy.random.seed(SEED)
+sys.setrecursionlimit(10000)
 
-print(f"Game size: {x // CELL_SIZE}x{y // CELL_SIZE}")
+loaded_images = {}
 cells: list[Cell] = []
 clients:list[socket.socket] = []
+remove_color_in_next_tick = []
+x, y = WINDOW_SIZE
 MINES_COUNT = int((x // CELL_SIZE) * (y // CELL_SIZE) * MINES_PERCENT / 100)
+
 time_from_start = 0
 last_click_time = 0  # for phone mode
 wins = 0
+show_bombs = False
+running = True
 
+screen = pygame.display.set_mode((x, y + 30), pygame.HWSURFACE | pygame.DOUBLEBUF)
+clock = pygame.time.Clock()
+info_font = pygame.font.Font(None, 15)
+cell_font = pygame.font.Font(None, CELL_SIZE)
+
+if x % CELL_SIZE != 0 or x % CELL_SIZE != 0:
+    print(f"CAN'T CONTINUE! RESOLUTION NOT DIVISIBLE BY {CELL_SIZE}")
+    exit()
+if not RANDOMIZE_SEED:
+    numpy.random.seed(SEED)
+
+print(f"Window size: {x // CELL_SIZE}x{y // CELL_SIZE}")
 
 def show_text_and_freeze_game(text, color, seconds):
-    screen.blit(pygame.font.Font(None, 35).render(text, True, color), (x / 2, y / 2))
+    font = pygame.font.Font(None, 35)
+    text_width, text_height = font.size(text)
+    screen.blit(font.render(text, True, color), (x / 2 - text_width / 2, y / 2 - text_height / 2))
     pygame.display.flip()
     time.sleep(seconds)
     pygame.event.clear()
@@ -36,7 +51,6 @@ def open_cell(cell):
     cell.text = str(mines)
     cell.color = COLORS[mines]
     cell.opened = True
-    redraw_cell(cell)
 
 def zero_cell_recursion(cell):
     if cell.opened:
@@ -93,7 +107,12 @@ def show_first_zero_cell():
 
 def start_game():
     global time_from_start
+    global show_bombs
+
+    show_bombs = False
+
     cells.clear()
+
     for y in range(0, int(WINDOW_SIZE[1] / CELL_SIZE)):
         for x in range(0, int(WINDOW_SIZE[0] / CELL_SIZE)):
             rect = pygame.Rect(CELL_SIZE * x, CELL_SIZE * y, CELL_SIZE, CELL_SIZE)
@@ -109,54 +128,60 @@ def start_game():
         if DEBUG:
             cell.color = (255, 0, 0)
         cells_copy.remove(cell)
-    redraw_cells()
     show_first_zero_cell()
 
-def render_image_on_cell(cell, image_path):
-    image = pygame.image.load(image_path)
-    image = pygame.transform.scale(image, (CELL_SIZE / 1.3, CELL_SIZE / 1.3))
-    screen.blit(image, (cell.rect.x + CELL_SIZE // 6, cell.rect.y + CELL_SIZE // 6))
+def draw_image_on_cell(cell, image_path):
+    if image_path not in loaded_images:
+        loaded_images[image_path] = pygame.image.load(image_path)
+        loaded_images[image_path] = pygame.transform.scale(loaded_images[image_path], (CELL_SIZE / 1.3, CELL_SIZE / 1.3))
 
-def redraw_cell(cell, show_bombs=False):
+    screen.blit(loaded_images[image_path], (cell.rect.x + CELL_SIZE // 6, cell.rect.y + CELL_SIZE // 6))
+
+def redraw_cell(cell):
     pygame.draw.rect(screen, cell.color, cell.rect)
 
     if cell.text:
-        screen.blit(pygame.font.Font(None, CELL_SIZE).render(f"{cell.text}", False, (0, 0, 0)),
+        screen.blit(cell_font.render(f"{cell.text}", False, (0, 0, 0)),
                     (cell.rect.x + CELL_SIZE // 4, cell.rect.y + CELL_SIZE // 4))
 
     if show_bombs:
         if cell.mine and not cell.flagged:
-            render_image_on_cell(cell, "assets/bomb.png")
+            draw_image_on_cell(cell, "assets/bomb.png")
 
     if cell.flagged:
-        render_image_on_cell(cell, "assets/flag.png")
+        draw_image_on_cell(cell, "assets/flag.png")
 
     if not cell.opened:
         pygame.draw.rect(screen, (185, 184, 192), pygame.Rect(cell.rect.x, cell.rect.y, CELL_SIZE, CELL_SIZE), width=1)
 
-def redraw_cells(show_bombs=False):
+def redraw_cells():
     for cell in cells:
-        redraw_cell(cell, show_bombs)
+        redraw_cell(cell)
 
 def game_over(cell_that_killed_player):
+    global show_bombs
+
+    show_bombs = True
+
     for cell in cells:
         if cell.mine and cell.flagged:
             cell.color = (82, 171, 99)
     cell_that_killed_player.color = (255, 0, 0)
-    redraw_cells(True)
-    show_text_and_freeze_game("Game Over", (0, 0, 0), 5)
+
+    redraw_cells()
+    pygame.display.flip()
+    show_text_and_freeze_game("Game Over", (200, 34, 34), 5)
 
     start_game()
     pygame.event.clear()
 
 def check_for_win():
     global wins
-
     good = len([cell for cell in cells if cell.flagged and cell.mine])
     opened = len([cell for cell in cells if cell.opened and not cell.mine])
 
     if good == MINES_COUNT and opened == len(cells) - len([cell for cell in cells if cell.mine]):
-        show_text_and_freeze_game(f"You won!", (31, 157, 0), 1)
+        show_text_and_freeze_game(f"You won!", (66, 170, 96), 2)
         wins += 1
         start_game()
 
@@ -172,6 +197,10 @@ def get_cell_mines(cell):
     neighbors = get_neighbors(cell)
     return len([cell_neighbor for cell_neighbor in neighbors if cell_neighbor.mine])
 
+def clear_cells_that_can_be_opened():
+    for cell in cells:
+        if cell.color == COLORS["will be opened"]:
+            cell.color = COLORS["closed"]
 
 def safety_open(cell):
     neighbors = get_neighbors(cell)
@@ -235,7 +264,6 @@ def right_click_handler(point):
     else:
         cell.flagged = False
 
-    redraw_cell(cell)
     check_for_win()
 
 def show_what_will_be_opened(point):
@@ -256,17 +284,26 @@ def show_what_will_be_opened(point):
             if cell_neighbor.opened or cell_neighbor.flagged:
                 continue
             cell_neighbor.color = COLORS["will be opened"]
-            redraw_cell(cell_neighbor)
+
 start_game()
 
 while running:
+    for cell in remove_color_in_next_tick:
+        if cell.opened:
+            cell.color = COLORS[get_cell_mines(cell)]
+        else:
+            cell.color = COLORS["closed"]
+        remove_color_in_next_tick.remove(cell)
+
     if not PHONE_MODE:
         cursor_changed = False
         for cell in cells:
             if not cell.opened:
                 if cell.rect.collidepoint(pygame.mouse.get_pos()):
+                    cell.color = COLORS["will be opened"]
                     pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND)
                     cursor_changed = True
+                    remove_color_in_next_tick.append(cell)
                     break
         if not cursor_changed:
             pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_ARROW)
@@ -286,8 +323,8 @@ while running:
                 show_what_will_be_opened(event.pos)
 
         if event.type == pygame.MOUSEBUTTONUP:
-
             if event.button == 1:
+                clear_cells_that_can_be_opened()
                 if not PHONE_MODE:
                     left_click_handler(event.pos)
                     continue
@@ -297,17 +334,16 @@ while running:
                     right_click_handler(event.pos)
             if event.button == 3:
                 right_click_handler(event.pos)
-
+    redraw_cells()
     pygame.draw.rect(screen, "white", pygame.Rect(0, y, x, 30))
     screen.blit(
-        pygame.font.Font(None, 15).render(f"Flags count: {MINES_COUNT - len([cell for cell in cells if cell.flagged])}",True, (0, 0, 0)), (0, y))
+        info_font.render(f"Flags count: {MINES_COUNT - len([cell for cell in cells if cell.flagged])}",True, (0, 0, 0)), (0, y))
     screen.blit(
-        pygame.font.Font(None, 15).render(f"Mines count: {MINES_COUNT}",True,(0, 0, 0)),(0, y+10))
+        info_font.render(f"Time from start: {round(time.time() - time_from_start)}", True, (0, 0, 0)), (0, y + 10))
     screen.blit(
-        pygame.font.Font(None, 15).render(f"Time from start: {round(time.time() - time_from_start)}", True, (0, 0, 0)), (0, y + 20))
-    screen.blit(
-        pygame.font.Font(None, 15).render(f"Wins count: {wins}", True, (0, 0, 0)),
-        (80, y))
+        info_font.render(f"FPS: {clock.get_fps():.2f}", True, (0, 0, 0)),
+        (0, y+20))
+
     pygame.display.flip()
     clock.tick(144)
 
