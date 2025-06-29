@@ -12,8 +12,8 @@ COLORS = {
     "mine": (84, 6, 0),
     "will be opened": (161, 175, 166),
 }
-IP = "127.0.0.1"
-PORT = 4266
+RANDOMIZE_SEED = True
+SEED = 1000
 CELL_SIZE = 50
 WINDOW_SIZE = (800, 800)  # 400x400 - beginner difficulty, 800x800 - standard difficulty, 1500x800 hard difficulty
 MINES_PERCENT = 20

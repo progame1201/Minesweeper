@@ -1,12 +1,9 @@
 import time
-import random
+import numpy
 import pygame
-import socket
-import threading
 from utils import *
 from config import *
 from objects import *
-from copy import deepcopy
 
 
 pygame.init()
@@ -14,10 +11,8 @@ x, y = WINDOW_SIZE
 screen = pygame.display.set_mode((x, y + 30), pygame.HWSURFACE | pygame.DOUBLEBUF)
 running = True
 clock = pygame.time.Clock()
-sock = socket.socket()
-sock.bind((IP, PORT))
-sock.listen(20)
-
+if not RANDOMIZE_SEED:
+    numpy.random.seed(SEED)
 
 print(f"Game size: {x // CELL_SIZE}x{y // CELL_SIZE}")
 cells: list[Cell] = []
@@ -94,7 +89,7 @@ def show_first_zero_cell():
     if not zero_cells:
         return
 
-    zero_cell_recursion(random.choice(zero_cells))
+    zero_cell_recursion(numpy.random.choice(zero_cells))
 
 def start_game():
     global time_from_start
@@ -109,13 +104,18 @@ def start_game():
 
     cells_copy = cells.copy()
     for i in range(MINES_COUNT):
-        cell: Cell = random.choice(cells_copy)
+        cell: Cell = numpy.random.choice(cells_copy)
         cell.mine = True
         if DEBUG:
             cell.color = (255, 0, 0)
         cells_copy.remove(cell)
     redraw_cells()
     show_first_zero_cell()
+
+def render_image_on_cell(cell, image_path):
+    image = pygame.image.load(image_path)
+    image = pygame.transform.scale(image, (CELL_SIZE / 1.3, CELL_SIZE / 1.3))
+    screen.blit(image, (cell.rect.x + CELL_SIZE // 6, cell.rect.y + CELL_SIZE // 6))
 
 def redraw_cell(cell, show_bombs=False):
     pygame.draw.rect(screen, cell.color, cell.rect)
@@ -125,15 +125,11 @@ def redraw_cell(cell, show_bombs=False):
                     (cell.rect.x + CELL_SIZE // 4, cell.rect.y + CELL_SIZE // 4))
 
     if show_bombs:
-        if cell.mine:
-            image = pygame.image.load(f"assets/bomb.png")
-            image = pygame.transform.scale(image, (CELL_SIZE / 1.3, CELL_SIZE / 1.3))
-            screen.blit(image, (cell.rect.x + CELL_SIZE // 6, cell.rect.y + CELL_SIZE // 6))
+        if cell.mine and not cell.flagged:
+            render_image_on_cell(cell, "assets/bomb.png")
 
     if cell.flagged:
-        image = pygame.image.load(f"assets/flag.png")
-        image = pygame.transform.scale(image, (CELL_SIZE / 1.3, CELL_SIZE / 1.3))
-        screen.blit(image, (cell.rect.x + CELL_SIZE // 6, cell.rect.y + CELL_SIZE // 6))
+        render_image_on_cell(cell, "assets/flag.png")
 
     if not cell.opened:
         pygame.draw.rect(screen, (185, 184, 192), pygame.Rect(cell.rect.x, cell.rect.y, CELL_SIZE, CELL_SIZE), width=1)
@@ -143,6 +139,9 @@ def redraw_cells(show_bombs=False):
         redraw_cell(cell, show_bombs)
 
 def game_over(cell_that_killed_player):
+    for cell in cells:
+        if cell.mine and cell.flagged:
+            cell.color = (82, 171, 99)
     cell_that_killed_player.color = (255, 0, 0)
     redraw_cells(True)
     show_text_and_freeze_game("Game Over", (0, 0, 0), 5)
