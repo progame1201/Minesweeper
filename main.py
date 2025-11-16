@@ -2,7 +2,6 @@ import sys
 import time
 import numpy
 import pygame
-from utils import *
 from config import *
 from objects import *
 
@@ -12,10 +11,9 @@ sys.setrecursionlimit(10000)
 
 loaded_images = {}
 cells: list[Cell] = []
-clients:list[socket.socket] = []
 remove_color_in_next_tick = []
 x, y = WINDOW_SIZE
-MINES_COUNT = int((x // CELL_SIZE) * (y // CELL_SIZE) * MINES_PERCENT / 100)
+mines_count = int((x // CELL_SIZE) * (y // CELL_SIZE) * MINES_PERCENT / 100)
 
 time_from_start = 0
 last_click_time = 0  # for phone mode
@@ -27,6 +25,7 @@ screen = pygame.display.set_mode((x, y + 30), pygame.HWSURFACE | pygame.DOUBLEBU
 clock = pygame.time.Clock()
 info_font = pygame.font.Font(None, 15)
 cell_font = pygame.font.Font(None, CELL_SIZE)
+text_font = pygame.font.Font(None, int(min(x, y) * 0.1))
 
 if x % CELL_SIZE != 0 or x % CELL_SIZE != 0:
     print(f"CAN'T CONTINUE! RESOLUTION NOT DIVISIBLE BY {CELL_SIZE}")
@@ -36,10 +35,12 @@ if not RANDOMIZE_SEED:
 
 print(f"Window size: {x // CELL_SIZE}x{y // CELL_SIZE}")
 
-def show_text_and_freeze_game(text, color, seconds):
-    font = pygame.font.Font(None, 35)
-    text_width, text_height = font.size(text)
-    screen.blit(font.render(text, True, color), (x / 2 - text_width / 2, y / 2 - text_height / 2))
+def show_text_and_freeze_game(text, color, seconds, background=False):
+    text_width, text_height = text_font.size(text)
+    text_pos_x, text_pos_y = x / 2 - text_width / 2, y / 2 - text_height / 2
+    if background:
+        pygame.draw.rect(screen, (255, 255, 255, 255), pygame.Rect(text_pos_x, text_pos_y, text_width, text_height))
+    screen.blit(text_font.render(text, True, color), (text_pos_x, text_pos_y))
     pygame.display.flip()
     time.sleep(seconds)
     pygame.event.clear()
@@ -70,10 +71,9 @@ def zero_cell_recursion(cell):
             return
         open_cell(cell)
 
-def get_neighbors(cell: Cell) -> list[Cell]:
+def get_neighbors(cell: Cell, cursor=0) -> list[Cell]:
     neighbors = []
     x, y = cell.rect.x, cell.rect.y
-
     for dy in range(-1, 2):
         for dx in range(-1, 2):
 
@@ -82,9 +82,16 @@ def get_neighbors(cell: Cell) -> list[Cell]:
 
             neighbor_x = x + dx * CELL_SIZE
             neighbor_y = y + dy * CELL_SIZE
-
-            for other_cell in cells:
+            for i, other_cell in enumerate(cells[cursor:]):
                 if other_cell.rect.x == neighbor_x and other_cell.rect.y == neighbor_y:
+                    cursor = i
+                    if DEBUG:
+                        past_color = other_cell.color
+                        other_cell.color = (0, 200, 50)
+                        redraw_cell(other_cell)
+                        pygame.display.flip()
+                        other_cell.color = past_color
+                        redraw_cell(other_cell)
                     neighbors.append(other_cell)
                     break
 
@@ -92,14 +99,17 @@ def get_neighbors(cell: Cell) -> list[Cell]:
 
 def show_first_zero_cell():
     zero_cells = []
-
+    s = time.time()
     for cell in cells:
-        neighbors = get_neighbors(cell)
-        mines = len([cell_neighbor for cell_neighbor in neighbors if cell_neighbor.mine])
+        mines = len([cell_neighbor for cell_neighbor in get_neighbors(cell) if cell_neighbor.mine])
 
         if mines == 0 and not cell.mine:
+            if len(cells) > 1000:
+                if numpy.random.random() <= 0.005:
+                    zero_cell_recursion(cell)
+                    return
             zero_cells.append(cell)
-
+    print(time.time() - s)
     if not zero_cells:
         return
 
@@ -108,27 +118,47 @@ def show_first_zero_cell():
 def start_game():
     global time_from_start
     global show_bombs
+    show_text_and_freeze_game("Generating level...", (0, 200, 100), 0, True)
 
     show_bombs = False
 
     cells.clear()
-
-    for y in range(0, int(WINDOW_SIZE[1] / CELL_SIZE)):
-        for x in range(0, int(WINDOW_SIZE[0] / CELL_SIZE)):
-            rect = pygame.Rect(CELL_SIZE * x, CELL_SIZE * y, CELL_SIZE, CELL_SIZE)
+    i = 0
+    for _y in range(0, int(WINDOW_SIZE[1] / CELL_SIZE)):
+        for _x in range(0, int(WINDOW_SIZE[0] / CELL_SIZE)):
+            rect = pygame.Rect(CELL_SIZE * _x, CELL_SIZE * _y, CELL_SIZE, CELL_SIZE)
             cell = Cell(rect, COLORS["closed"], "")
             cells.append(cell)
+            redraw_cell(cell)
+        if i >= 3:
+            i = 0
+        i+=1
+        show_text_and_freeze_game(f"Generating level {["/", "|", "\\", "-"][i]}", (0, 0, 0), 0, True)
+        #time.sleep(0.1)
+
+    redraw_cells()
+    show_text_and_freeze_game("Generating mines...", (0, 0, 0), 0, True)
 
     time_from_start = time.time()
 
     cells_copy = cells.copy()
-    for i in range(MINES_COUNT):
-        cell: Cell = numpy.random.choice(cells_copy)
+    numpy.random.shuffle(cells_copy)
+
+    need_to_create = mines_count
+    for cell in cells_copy:
+        if need_to_create <= 0:
+            break
+        need_to_create -= 1
         cell.mine = True
         if DEBUG:
             cell.color = (255, 0, 0)
-        cells_copy.remove(cell)
+            redraw_cell(cell)
+            pygame.display.flip()
+
+    redraw_cells()
+    show_text_and_freeze_game("Choosing first cells...", (0, 0, 0), 0, True)
     show_first_zero_cell()
+    print(len(cells))
 
 def draw_image_on_cell(cell, image_path):
     if image_path not in loaded_images:
@@ -180,7 +210,7 @@ def check_for_win():
     good = len([cell for cell in cells if cell.flagged and cell.mine])
     opened = len([cell for cell in cells if cell.opened and not cell.mine])
 
-    if good == MINES_COUNT and opened == len(cells) - len([cell for cell in cells if cell.mine]):
+    if good == mines_count and opened == len(cells) - len([cell for cell in cells if cell.mine]):
         show_text_and_freeze_game(f"You won!", (66, 170, 96), 2)
         wins += 1
         start_game()
@@ -194,8 +224,7 @@ def get_cell_on_point(point) -> Cell | None:
     return cell[0]
 
 def get_cell_mines(cell):
-    neighbors = get_neighbors(cell)
-    return len([cell_neighbor for cell_neighbor in neighbors if cell_neighbor.mine])
+    return len([cell_neighbor for cell_neighbor in get_neighbors(cell) if cell_neighbor.mine])
 
 def clear_cells_that_can_be_opened():
     for cell in cells:
@@ -236,11 +265,11 @@ def left_click_handler(point):
         game_over(cell)
         return
 
-    mines = get_cell_mines(cell)
-
     if cell.opened:
         safety_open(cell)
         return
+
+    mines = get_cell_mines(cell)
 
     if mines == 0:
         zero_cell_recursion(cell)
@@ -257,7 +286,7 @@ def right_click_handler(point):
         return
 
     if not cell.flagged:
-        if len([cell for cell in cells if cell.flagged]) >= MINES_COUNT:
+        if len([cell for cell in cells if cell.flagged]) >= mines_count:
             return
         cell.flagged = True
 
@@ -337,7 +366,7 @@ while running:
     redraw_cells()
     pygame.draw.rect(screen, "white", pygame.Rect(0, y, x, 30))
     screen.blit(
-        info_font.render(f"Flags count: {MINES_COUNT - len([cell for cell in cells if cell.flagged])}",True, (0, 0, 0)), (0, y))
+        info_font.render(f"Flags count: {mines_count - len([cell for cell in cells if cell.flagged])}", True, (0, 0, 0)), (0, y))
     screen.blit(
         info_font.render(f"Time from start: {round(time.time() - time_from_start)}", True, (0, 0, 0)), (0, y + 10))
     screen.blit(
