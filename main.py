@@ -17,6 +17,7 @@ mines_count = int((x // CELL_SIZE) * (y // CELL_SIZE) * MINES_PERCENT / 100)
 
 time_from_start = 0
 last_click_time = 0  # for phone mode
+flagged = 0
 wins = 0
 show_bombs = False
 running = True
@@ -46,11 +47,8 @@ def show_text_and_freeze_game(text, color, seconds, background=False):
     pygame.event.clear()
 
 def open_cell(cell):
-    neighbors = get_neighbors(cell)
-    mines = len([cell_neighbor for cell_neighbor in neighbors if cell_neighbor.mine])
-
-    cell.text = str(mines)
-    cell.color = COLORS[mines]
+    cell.text = str(cell.mines_around)
+    cell.color = COLORS[cell.mines_around]
     cell.opened = True
 
 def zero_cell_recursion(cell):
@@ -58,9 +56,8 @@ def zero_cell_recursion(cell):
         return
 
     neighbors = get_neighbors(cell)
-    mines = len([cell_neighbor for cell_neighbor in neighbors if cell_neighbor.mine])
 
-    if mines == 0:
+    if cell.mines_around == 0:
         if cell.flagged:
             return
         open_cell(cell)
@@ -76,7 +73,6 @@ def get_neighbors(cell: Cell, cursor=0) -> list[Cell]:
     x, y = cell.rect.x, cell.rect.y
     for dy in range(-1, 2):
         for dx in range(-1, 2):
-
             if dx == 0 and dy == 0:
                 continue
 
@@ -86,13 +82,11 @@ def get_neighbors(cell: Cell, cursor=0) -> list[Cell]:
                 if other_cell.rect.x == neighbor_x and other_cell.rect.y == neighbor_y:
                     cursor = i
                     if DEBUG:
-                        past_color = other_cell.color
-                        other_cell.color = (0, 200, 50)
-                        redraw_cell(other_cell)
+                        redraw_cell(other_cell, (0, 200, 50))
                         pygame.display.flip()
-                        other_cell.color = past_color
                         redraw_cell(other_cell)
                     neighbors.append(other_cell)
+
                     break
 
     return neighbors
@@ -101,9 +95,7 @@ def show_first_zero_cell():
     zero_cells = []
     s = time.time()
     for cell in cells:
-        mines = len([cell_neighbor for cell_neighbor in get_neighbors(cell) if cell_neighbor.mine])
-
-        if mines == 0 and not cell.mine:
+        if cell.mines_around == 0 and not cell.mine:
             if len(cells) > 1000:
                 if numpy.random.random() <= 0.005:
                     zero_cell_recursion(cell)
@@ -118,11 +110,17 @@ def show_first_zero_cell():
 def start_game():
     global time_from_start
     global show_bombs
+    global flagged
+
     show_text_and_freeze_game("Generating level...", (0, 200, 100), 0, True)
+    if DEBUG:
+        show_bombs = True
+    else:
+        show_bombs = False
 
-    show_bombs = False
-
+    flagged = 0
     cells.clear()
+
     i = 0
     for _y in range(0, int(WINDOW_SIZE[1] / CELL_SIZE)):
         for _x in range(0, int(WINDOW_SIZE[0] / CELL_SIZE)):
@@ -153,9 +151,12 @@ def start_game():
         if DEBUG:
             cell.color = (255, 0, 0)
             redraw_cell(cell)
-            pygame.display.flip()
+            pygame.display.update(cell.rect)
 
     redraw_cells()
+    for cell in cells:
+        cell.mines_around = len([cell_neighbor for cell_neighbor in get_neighbors(cell) if cell_neighbor.mine])
+
     show_text_and_freeze_game("Choosing first cells...", (0, 0, 0), 0, True)
     show_first_zero_cell()
     print(len(cells))
@@ -167,8 +168,8 @@ def draw_image_on_cell(cell, image_path):
 
     screen.blit(loaded_images[image_path], (cell.rect.x + CELL_SIZE // 6, cell.rect.y + CELL_SIZE // 6))
 
-def redraw_cell(cell):
-    pygame.draw.rect(screen, cell.color, cell.rect)
+def redraw_cell(cell, color=None):
+    pygame.draw.rect(screen, cell.color if color is None else color, cell.rect)
 
     if cell.text:
         screen.blit(cell_font.render(f"{cell.text}", False, (0, 0, 0)),
@@ -199,7 +200,6 @@ def game_over(cell_that_killed_player):
     cell_that_killed_player.color = (255, 0, 0)
 
     redraw_cells()
-    pygame.display.flip()
     show_text_and_freeze_game("Game Over", (200, 34, 34), 5)
 
     start_game()
@@ -207,10 +207,17 @@ def game_over(cell_that_killed_player):
 
 def check_for_win():
     global wins
-    good = len([cell for cell in cells if cell.flagged and cell.mine])
-    opened = len([cell for cell in cells if cell.opened and not cell.mine])
+    good = []
+    opened = []
+    for cell in cells:
+        if cell.flagged and cell.mine:
+            good.append(cell)
+        if cell.opened and not cell.mine:
+            opened.append(cell)
+    good = len(good)
+    opened = len(opened)
 
-    if good == mines_count and opened == len(cells) - len([cell for cell in cells if cell.mine]):
+    if good == mines_count and opened == len(cells) - mines_count:
         show_text_and_freeze_game(f"You won!", (66, 170, 96), 2)
         wins += 1
         start_game()
@@ -223,21 +230,19 @@ def get_cell_on_point(point) -> Cell | None:
 
     return cell[0]
 
-def get_cell_mines(cell):
-    return len([cell_neighbor for cell_neighbor in get_neighbors(cell) if cell_neighbor.mine])
-
 def clear_cells_that_can_be_opened():
     for cell in cells:
         if cell.color == COLORS["will be opened"]:
             cell.color = COLORS["closed"]
 
 def safety_open(cell):
-    neighbors = get_neighbors(cell)
-    mines = len([cell_neighbor for cell_neighbor in neighbors if cell_neighbor.mine])
+    if cell.mines_around == 0:
+        return
 
+    neighbors = get_neighbors(cell)
     flagged = len([cell_neighbor for cell_neighbor in neighbors if cell_neighbor.flagged])
 
-    if flagged == mines:
+    if flagged == cell.mines_around:
         for cell_neighbor in neighbors:
             if cell_neighbor.mine and not cell_neighbor.flagged:
                 game_over(cell_neighbor)
@@ -246,9 +251,7 @@ def safety_open(cell):
             if cell_neighbor.flagged:
                 continue
 
-            neighbor_mines = get_cell_mines(cell_neighbor)
-
-            if neighbor_mines == 0:
+            if cell_neighbor.mines_around == 0:
                 zero_cell_recursion(cell_neighbor)
                 continue
             open_cell(cell_neighbor)
@@ -269,15 +272,14 @@ def left_click_handler(point):
         safety_open(cell)
         return
 
-    mines = get_cell_mines(cell)
-
-    if mines == 0:
+    if cell.mines_around == 0:
         zero_cell_recursion(cell)
 
     open_cell(cell)
     check_for_win()
 
 def right_click_handler(point):
+    global flagged
     cell = get_cell_on_point(point)
     if not cell:
         return
@@ -286,12 +288,13 @@ def right_click_handler(point):
         return
 
     if not cell.flagged:
-        if len([cell for cell in cells if cell.flagged]) >= mines_count:
+        if flagged >= mines_count:
             return
         cell.flagged = True
-
+        flagged += 1
     else:
         cell.flagged = False
+        flagged -= 1
 
     check_for_win()
 
@@ -305,10 +308,9 @@ def show_what_will_be_opened(point):
         return
 
     neighbors = get_neighbors(cell)
-    mines = len([cell_neighbor for cell_neighbor in neighbors if cell_neighbor.mine])
-
     flagged = len([cell_neighbor for cell_neighbor in neighbors if cell_neighbor.flagged])
-    if flagged == mines:
+
+    if flagged == cell.mines_around:
         for cell_neighbor in neighbors:
             if cell_neighbor.opened or cell_neighbor.flagged:
                 continue
@@ -319,7 +321,7 @@ start_game()
 while running:
     for cell in remove_color_in_next_tick:
         if cell.opened:
-            cell.color = COLORS[get_cell_mines(cell)]
+            cell.color = COLORS[cell.mines_around]
         else:
             cell.color = COLORS["closed"]
         remove_color_in_next_tick.remove(cell)
@@ -366,7 +368,7 @@ while running:
     redraw_cells()
     pygame.draw.rect(screen, "white", pygame.Rect(0, y, x, 30))
     screen.blit(
-        info_font.render(f"Flags count: {mines_count - len([cell for cell in cells if cell.flagged])}", True, (0, 0, 0)), (0, y))
+        info_font.render(f"Flags count: {mines_count - flagged}", True, (0, 0, 0)), (0, y))
     screen.blit(
         info_font.render(f"Time from start: {round(time.time() - time_from_start)}", True, (0, 0, 0)), (0, y + 10))
     screen.blit(
